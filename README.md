@@ -1,19 +1,35 @@
 # DS18B20 temperature sensor
-[![Build Status](https://travis-ci.org/fuchsnj/ds18b20.svg?branch=master)](https://travis-ci.org/fuchsnj/ds18b20)
-[![crates.io](https://img.shields.io/crates/v/ds18b20.svg)](https://crates.io/crates/ds18b20)
-[![API](https://docs.rs/ds18b20/badge.svg)](https://docs.rs/ds18b20)
 
-A Rust [DS18B20](https://www.taydaelectronics.com/datasheets/A-072.pdf) temperature sensor driver for [embedded-hal](https://github.com/rust-embedded/embedded-hal) 
+A Rust driver for the [DS18B20](https://www.analog.com/en/products/DS18B20.html)
+temperature sensor using [embedded-hal](https://github.com/rust-embedded/embedded-hal) 1.0.
 
-This device uses the 1-wire protocol, and requires using the [one-wire-bus](https://crates.io/crates/one-wire-bus)
-library for the 1-wire bus.
+This is a fork of [fuchsnj/ds18b20](https://github.com/fuchsnj/ds18b20), the original
+driver, which is no longer actively maintained. This fork uses the
+[async-capable one-wire-bus fork](https://github.com/DaneSlattery/one-wire-bus)
+and provides blocking and async APIs.
+
+Add this fork to your project's dependencies.
+
+```toml
+[dependencies]
+ds18b20 = { git = "https://github.com/DaneSlattery/ds18b20", branch = "master" }
+```
+
+The default `async` feature adds `ds18b20::asynch::Ds18b20Async` for use with
+`OneWireAsync` and an `embedded_hal_async::delay::DelayNs` implementation. Set
+`default-features = false` if you only use the blocking API.
 
 ## Quick Start
 
 ### Get Temperature
 ```rust
+use core::fmt::{Debug, Write};
+use ds18b20::{Ds18b20, Resolution};
+use embedded_hal::{delay::DelayNs, digital::{InputPin, OutputPin}};
+use one_wire_bus::{OneWire, OneWireResult};
+
 fn get_temperature<P, E>(
-    delay: &mut (impl DelayUs<u16> + DelayMs<u16>),
+    delay: &mut impl DelayNs,
     tx: &mut impl Write,
     one_wire_bus: &mut OneWire<P>,
 ) -> OneWireResult<(), E>
@@ -43,7 +59,7 @@ fn get_temperature<P, E>(
 
             // contains the read temperature, as well as config info such as the resolution used
             let sensor_data = sensor.read_data(one_wire_bus, delay)?;
-            writeln!(tx, "Device at {:?} is {}°C", device_address, sensor_data.temperature);
+            let _ = writeln!(tx, "Device at {:?} is {}°C", device_address, sensor_data.temperature);
         } else {
             break;
         }
@@ -54,8 +70,13 @@ fn get_temperature<P, E>(
 
 ### Configuration
 ```rust
+use core::fmt::{Debug, Write};
+use ds18b20::Ds18b20;
+use embedded_hal::{delay::DelayNs, digital::{InputPin, OutputPin}};
+use one_wire_bus::{OneWire, OneWireResult};
+
 fn test_config<P, E>(
-    delay: &mut (impl DelayUs<u16> + DelayMs<u16>),
+    delay: &mut impl DelayNs,
     tx: &mut impl Write,
     one_wire_bus: &mut OneWire<P>,
 ) -> OneWireResult<(), E>
@@ -71,7 +92,7 @@ fn test_config<P, E>(
 
         // read the initial config values (read from EEPROM by the device when it was first powered)
         let initial_data = device.read_data(one_wire_bus, delay)?;
-        writeln!(tx, "Initial data: {:?}", initial_data);
+        let _ = writeln!(tx, "Initial data: {:?}", initial_data);
 
         let resolution = initial_data.resolution;
 
@@ -80,7 +101,7 @@ fn test_config<P, E>(
 
         // confirm the new config is now in the scratchpad memory
         let new_data = device.read_data(one_wire_bus, delay)?;
-        writeln!(tx, "New data: {:?}", new_data);
+        let _ = writeln!(tx, "New data: {:?}", new_data);
 
         // save the config to EEPROM to save it permanently
         device.save_to_eeprom(one_wire_bus, delay)?;
@@ -88,7 +109,7 @@ fn test_config<P, E>(
         // read the values from EEPROM back to the scratchpad to verify it was saved correctly
         device.recall_from_eeprom(one_wire_bus, delay)?;
         let eeprom_data = device.read_data(one_wire_bus, delay)?;
-        writeln!(tx, "EEPROM data: {:?}", eeprom_data);
+        let _ = writeln!(tx, "EEPROM data: {:?}", eeprom_data);
     }
     Ok(())
 }

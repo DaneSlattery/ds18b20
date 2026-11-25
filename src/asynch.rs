@@ -2,7 +2,7 @@ use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::{delay::DelayNs, digital::Wait};
 use one_wire_bus::{asynch::OneWireAsync, crc::check_crc8, Address, OneWireError, OneWireResult};
 
-use crate::{commands, FAMILY_CODE};
+use crate::{commands, decode_temperature, FAMILY_CODE};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
@@ -27,16 +27,6 @@ impl ResolutionAsync {
     /// using this resolution
     pub async fn delay_for_measurement_time(&self, delay: &mut impl DelayNs) {
         delay.delay_ms(self.max_measurement_time_millis()).await;
-    }
-
-    pub(crate) fn from_config_register(config: u8) -> Option<ResolutionAsync> {
-        match config {
-            0b00011111 => Some(ResolutionAsync::Bits9),
-            0b00111111 => Some(ResolutionAsync::Bits10),
-            0b01011111 => Some(ResolutionAsync::Bits11),
-            0b01111111 => Some(ResolutionAsync::Bits12),
-            _ => None,
-        }
     }
 
     pub(crate) fn to_config_register(self) -> u8 {
@@ -241,18 +231,16 @@ where
 {
     let scratchpad = read_scratchpad(address, onewire, delay).await?;
 
-    let resolution = if let Some(resolution) = ResolutionAsync::from_config_register(scratchpad[4])
-    {
-        resolution
-    } else {
-        return Err(OneWireError::CrcMismatch);
+    let resolution = match crate::Resolution::from_config_register(scratchpad[4]) {
+        Some(resolution) => resolution,
+        None => return Err(OneWireError::CrcMismatch),
     };
-    let raw_temp = u16::from_le_bytes([scratchpad[0], scratchpad[1]]);
-    let temperature = match resolution {
-        ResolutionAsync::Bits12 => (raw_temp as f32) / 16.0,
-        ResolutionAsync::Bits11 => (raw_temp as f32) / 8.0,
-        ResolutionAsync::Bits10 => (raw_temp as f32) / 4.0,
-        ResolutionAsync::Bits9 => (raw_temp as f32) / 2.0,
+    let temperature = decode_temperature([scratchpad[0], scratchpad[1]], resolution);
+    let resolution = match resolution {
+        crate::Resolution::Bits9 => ResolutionAsync::Bits9,
+        crate::Resolution::Bits10 => ResolutionAsync::Bits10,
+        crate::Resolution::Bits11 => ResolutionAsync::Bits11,
+        crate::Resolution::Bits12 => ResolutionAsync::Bits12,
     };
     Ok(SensorData {
         temperature,

@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-//! # Test Test
+//! DS18B20 temperature sensor driver for embedded-hal.
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
@@ -8,6 +8,7 @@ use one_wire_bus::{self, Address, OneWire, OneWireError, OneWireResult};
 
 pub const FAMILY_CODE: u8 = 0x28;
 
+#[cfg(feature = "async")]
 pub mod asynch;
 pub mod commands;
 mod resolution;
@@ -197,13 +198,7 @@ where
     } else {
         return Err(OneWireError::CrcMismatch);
     };
-    let raw_temp = u16::from_le_bytes([scratchpad[0], scratchpad[1]]);
-    let temperature = match resolution {
-        Resolution::Bits12 => (raw_temp as f32) / 16.0,
-        Resolution::Bits11 => (raw_temp as f32) / 8.0,
-        Resolution::Bits10 => (raw_temp as f32) / 4.0,
-        Resolution::Bits9 => (raw_temp as f32) / 2.0,
-    };
+    let temperature = decode_temperature([scratchpad[0], scratchpad[1]], resolution);
     Ok(SensorData {
         temperature,
         resolution,
@@ -245,4 +240,35 @@ where
     onewire.send_command(commands::COPY_SCRATCHPAD, address, delay)?;
     delay.delay_us(10000); // delay 10ms for the write to complete
     Ok(())
+}
+
+fn decode_temperature(bytes: [u8; 2], resolution: Resolution) -> f32 {
+    // The register always uses sixteenths of a degree. At lower resolutions
+    // the least significant bits are undefined.
+    let undefined_bits = match resolution {
+        Resolution::Bits9 => 0b111,
+        Resolution::Bits10 => 0b011,
+        Resolution::Bits11 => 0b001,
+        Resolution::Bits12 => 0,
+    };
+    let raw = i16::from_le_bytes(bytes) & !undefined_bits;
+    f32::from(raw) / 16.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_temperature, Resolution};
+
+    #[test]
+    fn decodes_signed_temperatures_at_all_resolutions() {
+        for (resolution, positive, negative, expected) in [
+            (Resolution::Bits9, [0x1f, 0x00], [0xef, 0xff], 1.5),
+            (Resolution::Bits10, [0x17, 0x00], [0xef, 0xff], 1.25),
+            (Resolution::Bits11, [0x13, 0x00], [0xef, 0xff], 1.125),
+            (Resolution::Bits12, [0x11, 0x00], [0xef, 0xff], 1.0625),
+        ] {
+            assert_eq!(decode_temperature(positive, resolution), expected);
+            assert_eq!(decode_temperature(negative, resolution), -expected);
+        }
+    }
 }
